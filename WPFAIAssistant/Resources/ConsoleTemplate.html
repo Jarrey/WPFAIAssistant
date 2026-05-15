@@ -1,0 +1,420 @@
+﻿<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>AI Console</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github-dark.min.css"/>
+<script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/highlight.min.js"></script>
+<style>
+  :root {
+    --bg: #1e1e2e;
+    --surface: #2a2a3e;
+    --user-bg: #3b4252;
+    --assistant-bg: #2d3142;
+    --thinking-bg: #1e2a1e;
+    --thinking-border: #4a9e4a;
+    --text: #cdd6f4;
+    --muted: #a6adc8;
+    --accent: #89b4fa;
+    --green: #a6e3a1;
+    --red: #f38ba8;
+    --yellow: #f9e2af;
+    --border: #45475a;
+    --code-bg: #181825;
+    --radius: 10px;
+    --font-mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    --font-sans: 'Segoe UI', system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%; background: var(--bg); color: var(--text);
+    font-family: var(--font-sans); font-size: 14px; line-height: 1.7;
+    overflow: hidden;
+  }
+  #console {
+    height: 100%; overflow-y: auto; padding: 16px;
+    display: flex; flex-direction: column; gap: 12px;
+    scroll-behavior: smooth;
+  }
+  #console::-webkit-scrollbar { width: 6px; }
+  #console::-webkit-scrollbar-track { background: transparent; }
+  #console::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* ── Bubbles ── */
+  .bubble {
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    animation: fadeIn 0.18s ease;
+  }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:none; } }
+
+  .bubble-user {
+    align-self: flex-end;
+    max-width: 75%;
+    background: var(--user-bg);
+    border-bottom-right-radius: 2px;
+  }
+  .bubble-user::before {
+    content: '👤 You';
+    display: block; font-size: 11px; color: var(--accent);
+    margin-bottom: 5px; font-weight: 600; letter-spacing: .4px;
+  }
+  .bubble-assistant {
+    align-self: stretch;
+    width: 100%;
+    background: var(--assistant-bg);
+    border-left: 3px solid var(--accent);
+    border-bottom-left-radius: 2px;
+  }
+  .bubble-assistant::before {
+    content: '🤖 Assistant';
+    display: block; font-size: 11px; color: var(--green);
+    margin-bottom: 5px; font-weight: 600; letter-spacing: .4px;
+  }
+  .bubble-system {
+    align-self: center;
+    background: transparent; color: var(--muted); font-size: 12px;
+    border: 1px dashed var(--border); padding: 5px 12px; border-radius: 6px;
+  }
+
+  /* ── Thinking block ── */
+  .thinking-block {
+    align-self: stretch;
+    width: 100%;
+    background: var(--thinking-bg);
+    border: 1px solid var(--thinking-border);
+    border-radius: var(--radius);
+    /* NO overflow:hidden here — let the body manage its own scroll */
+    animation: fadeIn 0.18s ease;
+    flex-shrink: 0; /* never compress below natural size in the flex column */
+  }
+  .thinking-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    min-height: 36px;  /* always tall enough to click, never "one line" */
+    background: rgba(74,158,74,0.15);
+    cursor: pointer;
+    user-select: none;
+    border-radius: var(--radius) var(--radius) 0 0;
+    transition: background 0.15s;
+  }
+  .thinking-header:hover { background: rgba(74,158,74,0.25); }
+  /* when body is hidden the header rounds all corners */
+  .thinking-block.collapsed .thinking-header {
+    border-radius: var(--radius);
+  }
+  .thinking-icon { font-size: 13px; flex-shrink: 0; }
+  .thinking-label {
+    flex: 1;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .4px;
+    color: var(--green);
+    text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .thinking-meta {
+    font-size: 10px;
+    color: var(--muted);
+    white-space: nowrap;
+    flex-shrink: 0;
+    margin-right: 6px;
+  }
+  .thinking-toggle {
+    font-size: 10px;
+    color: var(--muted);
+    flex-shrink: 0;
+    transition: transform 0.2s ease;
+    line-height: 1;
+  }
+  .thinking-block.collapsed .thinking-toggle { transform: rotate(-90deg); }
+
+  /* ── Body: visible during streaming ── */
+  .thinking-body {
+    max-height: 220px;
+    overflow-y: auto;
+    padding: 10px 14px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.65;
+    color: #a8d8a8;
+    white-space: pre-wrap;
+    word-break: break-word;
+    border-top: 1px solid rgba(74,158,74,0.3);
+  }
+  .thinking-body::-webkit-scrollbar { width: 4px; }
+  .thinking-body::-webkit-scrollbar-track { background: transparent; }
+  .thinking-body::-webkit-scrollbar-thumb { background: var(--thinking-border); border-radius: 2px; }
+
+  /* collapsed: hide body with CSS, no height transition to avoid jank */
+  .thinking-block.collapsed .thinking-body { display: none; }
+
+  /* streaming pulse on the icon */
+  .thinking-block.streaming .thinking-icon { animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+
+  /* blinking cursor at end of streamed text */
+  .thinking-body.streaming::after {
+    content: '▋';
+    color: var(--green);
+    animation: blink 0.75s step-end infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* ── Markdown inside bubbles ── */
+  .md h1, .md h2, .md h3, .md h4 { color: var(--accent); margin: 12px 0 6px; line-height: 1.3; }
+  .md h1 { font-size: 1.45em; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+  .md h2 { font-size: 1.25em; }
+  .md h3 { font-size: 1.1em; }
+  .md h4 { font-size: 1em; color: var(--muted); }
+  .md p { margin: 6px 0; }
+  .md p:first-child { margin-top: 0; }
+  .md p:last-child  { margin-bottom: 0; }
+  .md ul, .md ol { padding-left: 22px; margin: 6px 0; }
+  .md li { margin: 3px 0; }
+  .md strong { color: var(--accent); }
+  .md em     { color: var(--yellow); font-style: italic; }
+  .md del    { color: var(--muted); text-decoration: line-through; }
+  .md code {
+    background: var(--code-bg); color: var(--yellow);
+    padding: 1px 5px; border-radius: 4px;
+    font-family: var(--font-mono); font-size: 0.87em;
+  }
+  .md pre {
+    background: var(--code-bg) !important;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0 !important;
+    margin: 10px 0;
+    overflow: hidden;
+  }
+  .md pre code {
+    display: block;
+    padding: 12px 14px !important;
+    overflow-x: auto;
+    background: transparent !important;
+    color: var(--text) !important;
+    font-family: var(--font-mono);
+    font-size: 0.86em;
+    line-height: 1.55;
+    border-radius: 0;
+  }
+  .md table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 0.92em; }
+  .md th { background: #313244; color: var(--accent); padding: 7px 12px; text-align: left; font-weight: 600; border: 1px solid var(--border); }
+  .md td { padding: 6px 12px; border: 1px solid var(--border); vertical-align: top; }
+  .md tr:nth-child(even) td { background: rgba(255,255,255,0.03); }
+  .md tr:hover td { background: rgba(137,180,250,0.07); }
+  .md blockquote { border-left: 3px solid var(--accent); margin: 8px 0; padding: 4px 12px; color: var(--muted); background: rgba(137,180,250,0.06); border-radius: 0 6px 6px 0; }
+  .md hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+  .md a { color: var(--accent); text-decoration: none; }
+  .md a:hover { text-decoration: underline; }
+
+  .bubble-assistant.typing-cursor::after {
+    content: '▋'; color: var(--accent);
+    animation: blink 0.75s step-end infinite;
+  }
+
+  #empty-hint {
+    color: var(--muted); text-align: center; margin: auto;
+    font-size: 13px; opacity: 0.55; user-select: none;
+  }
+</style>
+</head>
+<body>
+<div id="console">
+  <div id="empty-hint">
+    <div style="font-size:2.5em;margin-bottom:10px">🤖</div>
+    <div>AI Assistant — start a conversation below</div>
+  </div>
+</div>
+<script>
+  marked.setOptions({ breaks: true, gfm: true });
+  marked.use({
+    renderer: (function() {
+      const r = new marked.Renderer();
+      r.code = function(token) {
+        const lang = (token.lang || '').split(/\s/)[0];
+        const code = token.text;
+        let highlighted;
+        try {
+          highlighted = lang && hljs.getLanguage(lang)
+            ? hljs.highlight(code, { language: lang }).value
+            : hljs.highlightAuto(code).value;
+        } catch { highlighted = code; }
+        const langLabel = lang ? `<span class="hljs-comment" style="float:right;padding:0 4px;font-size:0.8em;opacity:.6">${lang}</span>` : '';
+        return `<pre>${langLabel}<code class="hljs ${lang ? 'language-' + lang : ''}">${highlighted}</code></pre>`;
+      };
+      return r;
+    })()
+  });
+
+  const consoleEl = document.getElementById('console');
+  const hint = document.getElementById('empty-hint');
+  let currentBubble = null;
+  let currentRaw = '';
+  let currentThinking = null;
+
+  function removeHint() {
+    if (hint && hint.parentNode) hint.parentNode.removeChild(hint);
+  }
+  function scrollBottom() {
+    consoleEl.scrollTop = consoleEl.scrollHeight;
+  }
+
+  /* ── User message ── */
+  function appendUser(text) {
+    removeHint();
+    const div = document.createElement('div');
+    div.className = 'bubble bubble-user';
+    div.innerHTML = text;
+    consoleEl.appendChild(div);
+    scrollBottom();
+  }
+
+  /* ── Thinking region ── */
+  function appendThinkingStart() {
+    removeHint();
+
+    currentThinking = document.createElement('div');
+    currentThinking.className = 'thinking-block streaming';
+
+    // Header (always visible, click to expand/collapse)
+    const header = document.createElement('div');
+    header.className = 'thinking-header';
+    header.innerHTML =
+      '<span class="thinking-icon">💭</span>' +
+      '<span class="thinking-label">Thinking…</span>' +
+      '<span class="thinking-meta"></span>' +
+      '<span class="thinking-toggle">▼</span>';
+
+    // Body (scrollable, capped height)
+    const body = document.createElement('div');
+    body.className = 'thinking-body streaming';
+
+    header.addEventListener('click', function() {
+      currentThinking
+        ? /* still streaming — do nothing */ null
+        : toggleThinking(currentThinking || header.closest('.thinking-block'));
+    });
+
+    currentThinking.appendChild(header);
+    currentThinking.appendChild(body);
+    consoleEl.appendChild(currentThinking);
+
+    // record start time for elapsed display
+    currentThinking._startMs = Date.now();
+
+    scrollBottom();
+  }
+
+  function appendThinkingChunk(text) {
+    if (!currentThinking) appendThinkingStart();
+    const body = currentThinking.querySelector('.thinking-body');
+    body.textContent += text;
+    // auto-scroll the body itself so latest text is visible
+    body.scrollTop = body.scrollHeight;
+    // also scroll the outer console
+    scrollBottom();
+  }
+
+  function appendThinkingEnd() {
+    if (!currentThinking) return;
+
+    const block  = currentThinking;
+    const body   = block.querySelector('.thinking-body');
+    const label  = block.querySelector('.thinking-label');
+    const meta   = block.querySelector('.thinking-meta');
+    const toggle = block.querySelector('.thinking-toggle');
+
+    // Stop streaming indicators
+    block.classList.remove('streaming');
+    body.classList.remove('streaming');
+
+    // Update label + show elapsed time
+    const elapsed = ((Date.now() - (block._startMs || Date.now())) / 1000).toFixed(1);
+    label.textContent = 'Thought Process';
+    meta.textContent  = elapsed + 's';
+
+    // Wire click on the now-finished block
+    block.querySelector('.thinking-header').addEventListener('click', function() {
+      toggleThinking(block);
+    });
+
+    // Collapse immediately
+    block.classList.add('collapsed');
+
+    currentThinking = null;
+    scrollBottom();
+  }
+
+  function toggleThinking(block) {
+    if (!block) return;
+    block.classList.toggle('collapsed');
+  }
+
+  /* ── Assistant streaming bubble ── */
+  function appendAssistantStart() {
+    removeHint();
+    currentBubble = document.createElement('div');
+    currentBubble.className = 'bubble bubble-assistant typing-cursor';
+    const inner = document.createElement('div');
+    inner.className = 'md';
+    currentBubble.appendChild(inner);
+    currentRaw = '';
+    consoleEl.appendChild(currentBubble);
+    scrollBottom();
+  }
+
+  function appendAssistantChunk(text) {
+    if (!currentBubble) appendAssistantStart();
+    currentRaw += text;
+    currentBubble.querySelector('.md').innerText = currentRaw;
+    scrollBottom();
+  }
+
+  function renderAssistantMarkdown(raw) {
+    if (!currentBubble) return;
+    currentBubble.querySelector('.md').innerHTML = marked.parse(raw);
+    scrollBottom();
+  }
+
+  function appendAssistantEnd() {
+    if (currentBubble) {
+      currentBubble.classList.remove('typing-cursor');
+      currentBubble = null;
+      currentRaw = '';
+    }
+    scrollBottom();
+  }
+
+  function appendSystem(html) {
+    const div = document.createElement('div');
+    div.className = 'bubble bubble-system';
+    div.innerHTML = html;
+    consoleEl.appendChild(div);
+    scrollBottom();
+  }
+
+  function clearConsole() {
+    consoleEl.innerHTML = '';
+    consoleEl.appendChild(hint);
+    currentBubble = null;
+    currentRaw = '';
+    currentThinking = null;
+  }
+
+  window.onload = function() {
+    if (window.chrome && window.chrome.webview)
+      window.chrome.webview.postMessage('pageReady');
+  };
+</script>
+</body>
+</html>
