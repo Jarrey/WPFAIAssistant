@@ -27,6 +27,7 @@ namespace WPFAIAssistant
             // Agent registry
             var registry = new AgentRegistry();
             registry.Register(new FileSystemAgent());
+            registry.Register(new FileOutputAgent());
             services.AddSingleton<IAgentRegistry>(registry);
 
             // Core services
