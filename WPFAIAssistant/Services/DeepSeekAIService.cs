@@ -1,10 +1,15 @@
-﻿using System.Net.Http;
+using Microsoft.Extensions.AI;
+using OpenAI;
+using System.ClientModel;
+using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using WPFAIAssistant.Agents;
 using WPFAIAssistant.Models;
+using MEAIChatMessage = Microsoft.Extensions.AI.ChatMessage;
+using AppChatMessage = WPFAIAssistant.Models.ChatMessage;
 
 namespace WPFAIAssistant.Services
 {
@@ -22,15 +27,13 @@ namespace WPFAIAssistant.Services
             string modelId,
             string apiKey,
             string baseUrl,
-            IReadOnlyList<ChatMessage> history,
+            IReadOnlyList<AppChatMessage> history,
             Func<string, Task>? onThinkingChunk = null,
             string? systemPromptExtra = null,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            // deepseek-v4-pro supports thinking mode (via request params) but does NOT support
-            // tool/function calling when thinking is enabled. Skip tool resolution for it.
-            // deepseek-v4-flash is the standard model and supports tool calls.
-            // Legacy names: deepseek-reasoner → thinking, deepseek-chat → standard.
+            // deepseek-v4-pro / reasoner: thinking mode active, tool calling not supported by API.
+            // deepseek-v4-flash: standard model, supports tool calls.
             bool isReasoningModel = modelId.Contains("pro", StringComparison.OrdinalIgnoreCase)
                                  || modelId.Contains("reasoner", StringComparison.OrdinalIgnoreCase);
 
@@ -40,112 +43,103 @@ namespace WPFAIAssistant.Services
                 ? baseSystem
                 : baseSystem + "\n\n" + systemPromptExtra;
 
-            // Build the plain message list we'll send to the streaming endpoint
-            var messages = BuildConversationMessages(systemPrompt, history, userMessage);
+            // Build Microsoft.Extensions.AI ChatMessage list
+            var meaiMessages = BuildMeaiMessages(systemPrompt, history, userMessage);
 
             if (!isReasoningModel)
             {
-                // ── 1. Run tool/function calls via OpenAI-compatible non-streaming pass ──────
-                messages = await ResolveToolCallsAsync(messages, modelId, apiKey, baseUrl, cancellationToken);
+                // ── Tool call resolution via IChatClient + UseFunctionInvocation middleware ──
+                meaiMessages = await ResolveToolCallsViaMeaiAsync(
+                    meaiMessages, modelId, apiKey, baseUrl, cancellationToken);
             }
 
-            // ── Stream via raw HTTP so we can read reasoning_content ───────────
+            // ── Streaming via raw SSE to capture DeepSeek reasoning_content / thinking ──────
+            // IChatClient.GetStreamingResponseAsync does not surface DeepSeek-specific
+            // reasoning_content/thinking fields, so we keep the raw SSE streaming pass.
+            var rawMessages = ConvertMeaiToRaw(meaiMessages);
             await foreach (var token in StreamRawAsync(
-                messages, modelId, apiKey, baseUrl,
+                rawMessages, modelId, apiKey, baseUrl,
                 onThinkingChunk, isReasoningModel, cancellationToken))
             {
                 yield return token;
             }
         }
 
-        private async Task<List<Dictionary<string, object?>>> ResolveToolCallsAsync(
-            List<Dictionary<string, object?>> messages,
+        // ── Build Microsoft.Extensions.AI messages ────────────────────────────────────────
+        private static List<MEAIChatMessage> BuildMeaiMessages(
+            string systemPrompt,
+            IReadOnlyList<AppChatMessage> history,
+            string userMessage)
+        {
+            var messages = new List<MEAIChatMessage>
+            {
+                new(ChatRole.System, systemPrompt)
+            };
+
+            foreach (var msg in history)
+            {
+                var role = msg.Role == MessageRole.User ? ChatRole.User : ChatRole.Assistant;
+                messages.Add(new(role, msg.Content));
+            }
+
+            messages.Add(new(ChatRole.User, userMessage));
+            return messages;
+        }
+
+        // ── Tool resolution via IChatClient (Microsoft.Extensions.AI) ─────────────────────
+        private async Task<List<MEAIChatMessage>> ResolveToolCallsViaMeaiAsync(
+            List<MEAIChatMessage> messages,
             string modelId,
             string apiKey,
             string baseUrl,
             CancellationToken cancellationToken)
         {
-            var tools = _agentRegistry.GetToolDefinitions();
-            if (tools.Count == 0)
+            var aiFunctions = _agentRegistry.GetAIFunctions();
+            if (aiFunctions.Count == 0)
                 return messages;
 
-            var toolSpecs = tools.Select(t => new Dictionary<string, object?>
+            // Build IChatClient: OpenAI ChatClient → AsIChatClient → UseFunctionInvocation
+            var chatClient = BuildMeaiChatClient(modelId, apiKey, baseUrl, aiFunctions);
+
+            var options = new ChatOptions
             {
-                ["type"] = "function",
-                ["function"] = new Dictionary<string, object?>
-                {
-                    ["name"] = t.Name,
-                    ["description"] = t.Description,
-                    ["parameters"] = t.ParametersSchema
-                }
-            }).ToList();
+                MaxOutputTokens = 16000,
+                Temperature = 0.7f,
+                Tools = [.. aiFunctions],
+                ToolMode = ChatToolMode.Auto,
+            };
 
-            // Resolve iterative tool calls; keep final assistant response for streaming phase.
-            for (int i = 0; i < 6; i++)
-            {
-                var requestBody = JsonSerializer.Serialize(new
-                {
-                    model = modelId,
-                    messages,
-                    stream = false,
-                    max_tokens = 16000,
-                    temperature = 0.7,
-                    tools = toolSpecs,
-                    tool_choice = "auto"
-                });
+            // GetResponseAsync with UseFunctionInvocation handles the full tool-call loop
+            var response = await chatClient.GetResponseAsync(messages, options, cancellationToken);
 
-                using var completionDoc = await PostCompletionAsync(baseUrl, apiKey, requestBody, cancellationToken);
-                var assistantMessage = completionDoc.RootElement
-                    .GetProperty("choices")[0]
-                    .GetProperty("message");
-
-                if (!assistantMessage.TryGetProperty("tool_calls", out var toolCalls) ||
-                    toolCalls.ValueKind != JsonValueKind.Array ||
-                    toolCalls.GetArrayLength() == 0)
-                {
-                    break;
-                }
-
-                messages.Add(new Dictionary<string, object?>
-                {
-                    ["role"] = "assistant",
-                    ["tool_calls"] = JsonSerializer.Deserialize<object>(toolCalls.GetRawText())
-                });
-
-                foreach (var call in toolCalls.EnumerateArray())
-                {
-                    var callId = call.GetProperty("id").GetString() ?? string.Empty;
-                    var function = call.GetProperty("function");
-                    var toolName = function.GetProperty("name").GetString() ?? string.Empty;
-                    var argumentsJson = function.TryGetProperty("arguments", out var argsEl)
-                        ? argsEl.GetString() ?? "{}"
-                        : "{}";
-
-                    string toolOutput;
-                    try
-                    {
-                        using var argsDoc = JsonDocument.Parse(string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson);
-                        toolOutput = _agentRegistry.TryInvoke(toolName, argsDoc.RootElement)
-                            ?? $"[Error] Tool not found: {toolName}";
-                    }
-                    catch (Exception ex)
-                    {
-                        toolOutput = $"[Error] Tool execution failed: {ex.Message}";
-                    }
-
-                    messages.Add(new Dictionary<string, object?>
-                    {
-                        ["role"] = "tool",
-                        ["tool_call_id"] = callId,
-                        ["content"] = toolOutput
-                    });
-                }
-            }
-
+            // Append all response messages (tool calls + results + final assistant) to history
+            messages.AddRange(response.Messages);
             return messages;
         }
 
-        // ── Raw SSE streaming ────────────────────────────────────────────────────
+        private static IChatClient BuildMeaiChatClient(
+            string modelId,
+            string apiKey,
+            string baseUrl,
+            IReadOnlyList<AIFunction> tools)
+        {
+            var openAiOptions = new OpenAIClientOptions
+            {
+                Endpoint = new Uri(baseUrl.TrimEnd('/') + "/")
+            };
+
+            var inner = new OpenAIClient(new ApiKeyCredential(apiKey), openAiOptions)
+                .GetChatClient(modelId)
+                .AsIChatClient();
+
+            // UseFunctionInvocation middleware: auto-invokes local AIFunctions when model requests them
+            return inner
+                .AsBuilder()
+                .UseFunctionInvocation()
+                .Build();
+        }
+
+        // ── Raw SSE streaming (preserves DeepSeek-specific reasoning_content/thinking) ────
         private static async IAsyncEnumerable<string> StreamRawAsync(
             List<Dictionary<string, object?>> messages,
             string modelId,
@@ -157,8 +151,6 @@ namespace WPFAIAssistant.Services
         {
             var url = baseUrl.TrimEnd('/') + "/chat/completions";
 
-            // deepseek-v4-pro: enable thinking mode via API params.
-            // temperature must be 1 when thinking is enabled (API requirement).
             string requestBody;
             if (enableThinking)
             {
@@ -168,7 +160,7 @@ namespace WPFAIAssistant.Services
                     messages,
                     stream = true,
                     max_tokens = 16000,
-                    temperature = 1,
+                    temperature = 1,          // required when thinking enabled
                     thinking = new { type = "enabled" },
                     reasoning_effort = "high",
                 });
@@ -196,7 +188,6 @@ namespace WPFAIAssistant.Services
 
             using var response = await http.SendAsync(
                 request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-
             response.EnsureSuccessStatusCode();
 
             using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -221,27 +212,15 @@ namespace WPFAIAssistant.Services
                         .GetProperty("delta");
 
                     // DeepSeek V4 uses "thinking"; legacy R1/reasoner used "reasoning_content"
-                    if (delta.TryGetProperty("thinking", out var tk) &&
-                        tk.ValueKind == JsonValueKind.String)
-                    {
+                    if (delta.TryGetProperty("thinking", out var tk) && tk.ValueKind == JsonValueKind.String)
                         reasoning = tk.GetString();
-                    }
-                    else if (delta.TryGetProperty("reasoning_content", out var rc) &&
-                        rc.ValueKind == JsonValueKind.String)
-                    {
+                    else if (delta.TryGetProperty("reasoning_content", out var rc) && rc.ValueKind == JsonValueKind.String)
                         reasoning = rc.GetString();
-                    }
 
-                    if (delta.TryGetProperty("content", out var ct) &&
-                        ct.ValueKind == JsonValueKind.String)
-                    {
+                    if (delta.TryGetProperty("content", out var ct) && ct.ValueKind == JsonValueKind.String)
                         content = ct.GetString();
-                    }
                 }
-                catch
-                {
-                    continue;
-                }
+                catch { continue; }
 
                 if (!string.IsNullOrEmpty(reasoning) && onThinkingChunk != null)
                     await onThinkingChunk(reasoning);
@@ -251,70 +230,36 @@ namespace WPFAIAssistant.Services
             }
         }
 
-        public async Task<IReadOnlyList<string>> GetAvailableModelsAsync(string apiKey, string baseUrl)
+        // ── Convert Microsoft.Extensions.AI messages → raw dict list for SSE pass ─────────
+        private static List<Dictionary<string, object?>> ConvertMeaiToRaw(
+            List<MEAIChatMessage> messages)
         {
-            return await Task.FromResult<IReadOnlyList<string>>(new List<string>
+            var result = new List<Dictionary<string, object?>>();
+            foreach (var m in messages)
             {
-                "deepseek-v4-flash",
-                "deepseek-v4-pro",
-            });
-        }
+                // Skip tool call/result messages — they've already been resolved
+                if (m.Role == ChatRole.Tool) continue;
 
-        private static List<Dictionary<string, object?>> BuildConversationMessages(
-            string systemPrompt,
-            IReadOnlyList<ChatMessage> history,
-            string userMessage)
-        {
-            var messages = new List<Dictionary<string, object?>>
-            {
-                new()
-                {
-                    ["role"] = "system",
-                    ["content"] = systemPrompt
-                }
-            };
+                var role = m.Role == ChatRole.System    ? "system"
+                         : m.Role == ChatRole.Assistant ? "assistant"
+                         : "user";
 
-            foreach (var msg in history)
-            {
-                var role = msg.Role == MessageRole.User ? "user" : "assistant";
-                messages.Add(new Dictionary<string, object?>
+                result.Add(new Dictionary<string, object?>
                 {
-                    ["role"] = role,
-                    ["content"] = msg.Content
+                    ["role"]    = role,
+                    ["content"] = m.Text ?? string.Empty
                 });
             }
-
-            messages.Add(new Dictionary<string, object?>
-            {
-                ["role"] = "user",
-                ["content"] = userMessage
-            });
-
-            return messages;
+            return result;
         }
 
-        private static async Task<JsonDocument> PostCompletionAsync(
-            string baseUrl,
-            string apiKey,
-            string body,
-            CancellationToken cancellationToken)
+        public async Task<IReadOnlyList<string>> GetAvailableModelsAsync(string apiKey, string baseUrl)
         {
-            var url = baseUrl.TrimEnd('/') + "/chat/completions";
-
-            using var http = new HttpClient();
-            http.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", apiKey);
-
-            using var request = new HttpRequestMessage(HttpMethod.Post, url)
-            {
-                Content = new StringContent(body, Encoding.UTF8, "application/json")
-            };
-
-            using var response = await http.SendAsync(request, cancellationToken);
-            response.EnsureSuccessStatusCode();
-
-            var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            return JsonDocument.Parse(json);
+            return await Task.FromResult<IReadOnlyList<string>>(
+            [
+                "deepseek-v4-flash",
+                "deepseek-v4-pro",
+            ]);
         }
     }
 }

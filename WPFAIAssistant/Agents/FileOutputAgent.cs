@@ -1,107 +1,27 @@
+using Microsoft.Extensions.AI;
 using System.ComponentModel;
 using System.IO;
 using System.Text;
-using System.Text.Json;
 
 namespace WPFAIAssistant.Agents
 {
     /// <summary>
     /// Agent that lets the AI write output to local files.
+    /// Tools are registered as Microsoft.Extensions.AI AIFunction instances.
     /// </summary>
     public class FileOutputAgent : IAgent
     {
         public string PluginName => "FileOutput";
         public string Description => "Writes or appends text content to local files.";
 
-        public IReadOnlyList<AgentToolDefinition> GetToolDefinitions()
-        {
-            return
-            [
-                new AgentToolDefinition
-                {
-                    Name = "write_text_file",
-                    Description = "Write text content to a local file. Creates parent folders if needed.",
-                    ParametersSchema = new Dictionary<string, object>
-                    {
-                        ["type"] = "object",
-                        ["properties"] = new Dictionary<string, object>
-                        {
-                            ["path"] = new Dictionary<string, object>
-                            {
-                                ["type"] = "string",
-                                ["description"] = "Absolute or relative file path."
-                            },
-                            ["content"] = new Dictionary<string, object>
-                            {
-                                ["type"] = "string",
-                                ["description"] = "Text content to write."
-                            },
-                            ["overwrite"] = new Dictionary<string, object>
-                            {
-                                ["type"] = "boolean",
-                                ["description"] = "Whether to overwrite if the file exists."
-                            },
-                            ["encoding"] = new Dictionary<string, object>
-                            {
-                                ["type"] = "string",
-                                ["description"] = "Text encoding. Supported: utf-8, utf-16, ascii."
-                            }
-                        },
-                        ["required"] = new[] { "path", "content" },
-                        ["additionalProperties"] = false
-                    }
-                },
-                new AgentToolDefinition
-                {
-                    Name = "append_text_file",
-                    Description = "Append text content to a local file. Creates parent folders and file if needed.",
-                    ParametersSchema = new Dictionary<string, object>
-                    {
-                        ["type"] = "object",
-                        ["properties"] = new Dictionary<string, object>
-                        {
-                            ["path"] = new Dictionary<string, object>
-                            {
-                                ["type"] = "string",
-                                ["description"] = "Absolute or relative file path."
-                            },
-                            ["content"] = new Dictionary<string, object>
-                            {
-                                ["type"] = "string",
-                                ["description"] = "Text content to append."
-                            },
-                            ["encoding"] = new Dictionary<string, object>
-                            {
-                                ["type"] = "string",
-                                ["description"] = "Text encoding. Supported: utf-8, utf-16, ascii."
-                            }
-                        },
-                        ["required"] = new[] { "path", "content" },
-                        ["additionalProperties"] = false
-                    }
-                }
-            ];
-        }
-
-        public string Invoke(string toolName, JsonElement arguments)
-        {
-            return toolName switch
-            {
-                "write_text_file" => WriteTextFile(
-                    GetRequiredString(arguments, "path"),
-                    GetRequiredString(arguments, "content"),
-                    GetOptionalBool(arguments, "overwrite") ?? true,
-                    GetOptionalString(arguments, "encoding") ?? "utf-8"),
-                "append_text_file" => AppendTextFile(
-                    GetRequiredString(arguments, "path"),
-                    GetRequiredString(arguments, "content"),
-                    GetOptionalString(arguments, "encoding") ?? "utf-8"),
-                _ => $"[Error] Unknown tool: {toolName}"
-            };
-        }
+        public IReadOnlyList<AIFunction> GetAIFunctions() =>
+        [
+            AIFunctionFactory.Create(WriteTextFile,  name: "write_text_file"),
+            AIFunctionFactory.Create(AppendTextFile, name: "append_text_file"),
+        ];
 
         [Description("Write text content to a local file. Creates parent folders if needed.")]
-        public string WriteTextFile(
+        private string WriteTextFile(
             [Description("Absolute or relative file path.")] string path,
             [Description("Text content to write.")] string content,
             [Description("Whether to overwrite if the file exists.")] bool overwrite = true,
@@ -128,7 +48,7 @@ namespace WPFAIAssistant.Agents
         }
 
         [Description("Append text content to a local file. Creates parent folders and file if needed.")]
-        public string AppendTextFile(
+        private string AppendTextFile(
             [Description("Absolute or relative file path.")] string path,
             [Description("Text content to append.")] string content,
             [Description("Text encoding. Supported: utf-8, utf-16, ascii.")] string encoding = "utf-8")
@@ -150,31 +70,6 @@ namespace WPFAIAssistant.Agents
             }
         }
 
-        private static string GetRequiredString(JsonElement obj, string property)
-        {
-            if (obj.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String)
-                return value.GetString() ?? string.Empty;
-
-            throw new ArgumentException($"Missing required argument: {property}");
-        }
-
-        private static string? GetOptionalString(JsonElement obj, string property)
-        {
-            if (obj.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String)
-                return value.GetString();
-
-            return null;
-        }
-
-        private static bool? GetOptionalBool(JsonElement obj, string property)
-        {
-            if (obj.TryGetProperty(property, out var value) &&
-                (value.ValueKind == JsonValueKind.True || value.ValueKind == JsonValueKind.False))
-                return value.GetBoolean();
-
-            return null;
-        }
-
         private static string ResolvePath(string path)
         {
             if (string.IsNullOrWhiteSpace(path))
@@ -188,13 +83,12 @@ namespace WPFAIAssistant.Agents
         private static Encoding ResolveEncoding(string encoding)
         {
             if (string.IsNullOrWhiteSpace(encoding)) return Encoding.UTF8;
-
             return encoding.Trim().ToLowerInvariant() switch
             {
-                "utf-8" or "utf8" => new UTF8Encoding(false),
+                "utf-8" or "utf8"            => new UTF8Encoding(false),
                 "utf-16" or "utf16" or "unicode" => Encoding.Unicode,
-                "ascii" => Encoding.ASCII,
-                _ => Encoding.UTF8
+                "ascii"                      => Encoding.ASCII,
+                _                            => Encoding.UTF8
             };
         }
     }

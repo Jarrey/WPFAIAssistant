@@ -1,9 +1,9 @@
-using System.Text.Json;
+using Microsoft.Extensions.AI;
 
 namespace WPFAIAssistant.Agents
 {
     /// <summary>
-    /// Collects all registered agents and exposes their tool definitions.
+    /// Collects all registered agents and exposes their AIFunctions.
     /// Inject IAgentRegistry wherever you need to add or enumerate agents.
     /// </summary>
     public interface IAgentRegistry
@@ -11,8 +11,8 @@ namespace WPFAIAssistant.Agents
         IReadOnlyList<IAgent> Agents { get; }
         void Register(IAgent agent);
 
-        IReadOnlyList<AgentToolDefinition> GetToolDefinitions();
-        string? TryInvoke(string toolName, JsonElement arguments);
+        /// <summary>Returns all AIFunction instances from all registered agents.</summary>
+        IReadOnlyList<AIFunction> GetAIFunctions();
     }
 
     public class AgentRegistry : IAgentRegistry
@@ -23,24 +23,12 @@ namespace WPFAIAssistant.Agents
 
         public void Register(IAgent agent) => _agents.Add(agent);
 
-        public IReadOnlyList<AgentToolDefinition> GetToolDefinitions()
+        public IReadOnlyList<AIFunction> GetAIFunctions()
         {
-            var tools = new List<AgentToolDefinition>();
+            var functions = new List<AIFunction>();
             foreach (var agent in _agents)
-                tools.AddRange(agent.GetToolDefinitions());
-            return tools;
-        }
-
-        public string? TryInvoke(string toolName, JsonElement arguments)
-        {
-            foreach (var agent in _agents)
-            {
-                var defs = agent.GetToolDefinitions();
-                if (defs.Any(d => string.Equals(d.Name, toolName, StringComparison.OrdinalIgnoreCase)))
-                    return agent.Invoke(toolName, arguments);
-            }
-
-            return null;
+                functions.AddRange(agent.GetAIFunctions());
+            return functions;
         }
     }
 }
