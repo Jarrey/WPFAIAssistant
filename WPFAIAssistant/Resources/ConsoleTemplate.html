@@ -299,10 +299,9 @@
     const body = document.createElement('div');
     body.className = 'thinking-body streaming';
 
+    // Always allow toggling — works during streaming and after collapse
     header.addEventListener('click', function() {
-      currentThinking
-        ? /* still streaming — do nothing */ null
-        : toggleThinking(currentThinking || header.closest('.thinking-block'));
+      toggleThinking(this.closest('.thinking-block'));
     });
 
     currentThinking.appendChild(header);
@@ -343,10 +342,7 @@
     label.textContent = 'Thought Process';
     meta.textContent  = elapsed + 's';
 
-    // Wire click on the now-finished block
-    block.querySelector('.thinking-header').addEventListener('click', function() {
-      toggleThinking(block);
-    });
+    // Wire click on the now-finished block (listener already attached in appendThinkingStart)
 
     // Collapse immediately
     block.classList.add('collapsed');

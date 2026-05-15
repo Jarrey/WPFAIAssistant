@@ -26,7 +26,7 @@ namespace WPFAIAssistant.Services
             string apiKey,
             string baseUrl,
             IReadOnlyList<ChatMessage> history,
-            Action<string>? onThinkingChunk = null,
+            Func<string, Task>? onThinkingChunk = null,
             string? systemPromptExtra = null,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
@@ -113,7 +113,7 @@ namespace WPFAIAssistant.Services
             string modelId,
             string apiKey,
             string baseUrl,
-            Action<string>? onThinkingChunk,
+            Func<string, Task>? onThinkingChunk,
             bool enableThinking,
             [EnumeratorCancellation] CancellationToken cancellationToken)
         {
@@ -182,8 +182,13 @@ namespace WPFAIAssistant.Services
                         .GetProperty("choices")[0]
                         .GetProperty("delta");
 
-                    // reasoning_content (DeepSeek-R1 / deepseek-reasoner)
-                    if (delta.TryGetProperty("reasoning_content", out var rc) &&
+                    // DeepSeek V4 uses "thinking"; legacy R1/reasoner used "reasoning_content"
+                    if (delta.TryGetProperty("thinking", out var tk) &&
+                        tk.ValueKind == JsonValueKind.String)
+                    {
+                        reasoning = tk.GetString();
+                    }
+                    else if (delta.TryGetProperty("reasoning_content", out var rc) &&
                         rc.ValueKind == JsonValueKind.String)
                     {
                         reasoning = rc.GetString();
@@ -198,8 +203,8 @@ namespace WPFAIAssistant.Services
                 }
                 catch { continue; }
 
-                if (!string.IsNullOrEmpty(reasoning))
-                    onThinkingChunk?.Invoke(reasoning);
+                if (!string.IsNullOrEmpty(reasoning) && onThinkingChunk != null)
+                    await onThinkingChunk(reasoning);
 
                 if (!string.IsNullOrEmpty(content))
                     yield return content;

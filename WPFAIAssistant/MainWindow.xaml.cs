@@ -23,11 +23,15 @@ namespace WPFAIAssistant
             _vm.PushHtmlToConsole = async (script) =>
             {
                 if (!_webViewReady) return;
-                await Dispatcher.InvokeAsync(async () =>
+                // Marshal to UI thread and fully await the WebView2 call.
+                // InvokeAsync(Func<Task>) returns DispatcherOperation<Task>; .Result unwraps
+                // to the inner Task so we can await completion of ExecuteScriptAsync.
+                var op = Dispatcher.InvokeAsync(async () =>
                 {
                     try { await ConsoleWebView.ExecuteScriptAsync(script); }
                     catch { }
                 });
+                await (await op.Task);
             };
 
             _vm.ReplayHistory = async (messages) =>
@@ -82,11 +86,12 @@ namespace WPFAIAssistant
 
         private async Task ExecAsync(string script)
         {
-            await Dispatcher.InvokeAsync(async () =>
+            var op = Dispatcher.InvokeAsync(async () =>
             {
                 try { await ConsoleWebView.ExecuteScriptAsync(script); }
                 catch { }
             });
+            await (await op.Task);
         }
 
         private static string EscapeJs(string s) =>
@@ -118,34 +123,29 @@ namespace WPFAIAssistant
 
         private void Preset_DeepSeek(object sender, RoutedEventArgs e)
         {
-            _vm.BaseUrl = "https://api.deepseek.com/v1";
-            if (!_vm.AvailableModels.Contains("deepseek-v4-flash"))
-                _vm.AvailableModels.Add("deepseek-v4-flash");
+            _vm.BaseUrl = "https://api.deepseek.com/";
+            _vm.AvailableModels.Clear();
+            _vm.AvailableModels.Add("deepseek-v4-flash");
+            _vm.AvailableModels.Add("deepseek-v4-pro");
             _vm.SelectedModel = "deepseek-v4-flash";
-            if (!_vm.AvailableModels.Contains("deepseek-v4-pro"))
-                _vm.AvailableModels.Add("deepseek-v4-pro");
-            _vm.SelectedModel = "deepseek-v4-pro";
         }
 
         private void Preset_OpenAI(object sender, RoutedEventArgs e)
         {
             _vm.BaseUrl = "https://api.openai.com/v1";
-            if (!_vm.AvailableModels.Contains("gpt-4o"))
-                _vm.AvailableModels.Add("gpt-4o");
-            if (!_vm.AvailableModels.Contains("gpt-4o-mini"))
-                _vm.AvailableModels.Add("gpt-4o-mini");
+            _vm.AvailableModels.Clear();
+            _vm.AvailableModels.Add("gpt-4o");
+            _vm.AvailableModels.Add("gpt-4o-mini");
             _vm.SelectedModel = "gpt-4o";
         }
 
         private void Preset_Claude(object sender, RoutedEventArgs e)
         {
             _vm.BaseUrl = "https://api.anthropic.com/v1";
-            if (!_vm.AvailableModels.Contains("claude-opus-4-5"))
-                _vm.AvailableModels.Add("claude-opus-4-5");
-            if (!_vm.AvailableModels.Contains("claude-sonnet-4-5"))
-                _vm.AvailableModels.Add("claude-sonnet-4-5");
-            if (!_vm.AvailableModels.Contains("claude-haiku-3-5"))
-                _vm.AvailableModels.Add("claude-haiku-3-5");
+            _vm.AvailableModels.Clear();
+            _vm.AvailableModels.Add("claude-opus-4-5");
+            _vm.AvailableModels.Add("claude-sonnet-4-5");
+            _vm.AvailableModels.Add("claude-haiku-3-5");
             _vm.SelectedModel = "claude-sonnet-4-5";
         }
 

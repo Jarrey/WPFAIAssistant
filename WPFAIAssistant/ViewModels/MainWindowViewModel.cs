@@ -18,7 +18,7 @@ namespace WPFAIAssistant.ViewModels
 
         private ChatSession _currentSession = new();
 
-        public Action<string>? PushHtmlToConsole { get; set; }
+        public Func<string, Task>? PushHtmlToConsole { get; set; }
         public Func<IReadOnlyList<ChatMessage>, Task>? ReplayHistory { get; set; }
 
         // ── Settings ──────────────────────────────────────────────
@@ -91,7 +91,7 @@ namespace WPFAIAssistant.ViewModels
                 }
             }
 
-            AppendUserBubble(text);
+            await AppendUserBubble(text);
 
             _cts = new CancellationTokenSource();
             var assistantBuffer = new System.Text.StringBuilder();
@@ -117,45 +117,39 @@ namespace WPFAIAssistant.ViewModels
             {
                 await foreach (var chunk in _aiService.StreamChatAsync(
                     text, SelectedModel, ApiKey, BaseUrl, _currentSession.Messages,
-                    onThinkingChunk: (thinking) =>
+                    onThinkingChunk: async (thinking) =>
                     {
                         if (!hasThinking)
                         {
                             hasThinking = true;
-                            PushHtmlToConsole?.Invoke("appendThinkingStart();");
+                            await Push("appendThinkingStart();");
                         }
                         thinkingBuffer.Append(thinking);
-                        var escaped = EscapeJsString(thinking);
-                        PushHtmlToConsole?.Invoke($"appendThinkingChunk('{escaped}');");
+                        await Push($"appendThinkingChunk('{EscapeJsString(thinking)}');");
                     },
                     systemPromptExtra: string.IsNullOrEmpty(systemExtra) ? null : systemExtra,
                     cancellationToken: _cts.Token))
                 {
                     if (hasThinking && !assistantStarted)
-                    {
-                        // Close thinking block right before first assistant token
-                        PushHtmlToConsole?.Invoke("appendThinkingEnd();");
-                    }
+                        await Push("appendThinkingEnd();");
+
                     if (!assistantStarted)
                     {
                         assistantStarted = true;
-                        PushHtmlToConsole?.Invoke("appendAssistantStart();");
+                        await Push("appendAssistantStart();");
                     }
                     assistantBuffer.Append(chunk);
-                    var escaped = EscapeJsString(chunk);
-                    PushHtmlToConsole?.Invoke($"appendAssistantChunk('{escaped}');");
+                    await Push($"appendAssistantChunk('{EscapeJsString(chunk)}');");
                 }
 
-                // If thinking never ended (no content came after thinking)
                 if (hasThinking)
-                    PushHtmlToConsole?.Invoke("appendThinkingEnd();");
+                    await Push("appendThinkingEnd();");
 
                 if (!assistantStarted)
-                    PushHtmlToConsole?.Invoke("appendAssistantStart();");
+                    await Push("appendAssistantStart();");
 
-                var escapedMarkdown = EscapeJsString(assistantBuffer.ToString());
-                PushHtmlToConsole?.Invoke($"renderAssistantMarkdown('{escapedMarkdown}');");
-                PushHtmlToConsole?.Invoke("appendAssistantEnd();");
+                await Push($"renderAssistantMarkdown('{EscapeJsString(assistantBuffer.ToString())}');");
+                await Push("appendAssistantEnd();");
 
                 _currentSession.Messages.Add(new ChatMessage { Role = MessageRole.User, Content = text });
                 _currentSession.Messages.Add(new ChatMessage { Role = MessageRole.Assistant, Content = assistantBuffer.ToString() });
@@ -174,17 +168,17 @@ namespace WPFAIAssistant.ViewModels
             }
             catch (OperationCanceledException)
             {
-                if (hasThinking) PushHtmlToConsole?.Invoke("appendThinkingEnd();");
-                if (assistantStarted) PushHtmlToConsole?.Invoke("appendAssistantEnd();");
-                PushHtmlToConsole?.Invoke(BuildScript("appendSystem", "<em>Generation cancelled.</em>"));
+                if (hasThinking) await Push("appendThinkingEnd();");
+                if (assistantStarted) await Push("appendAssistantEnd();");
+                await Push(BuildScript("appendSystem", "<em>Generation cancelled.</em>"));
                 StatusText = "Cancelled";
             }
             catch (Exception ex)
             {
-                if (hasThinking) PushHtmlToConsole?.Invoke("appendThinkingEnd();");
-                if (assistantStarted) PushHtmlToConsole?.Invoke("appendAssistantEnd();");
+                if (hasThinking) await Push("appendThinkingEnd();");
+                if (assistantStarted) await Push("appendAssistantEnd();");
                 var errHtml = "<span style='color:#e74c3c'><b>Error:</b> " + System.Web.HttpUtility.HtmlEncode(ex.Message) + "</span>";
-                PushHtmlToConsole?.Invoke(BuildScript("appendSystem", EscapeJsString(errHtml)));
+                await Push(BuildScript("appendSystem", EscapeJsString(errHtml)));
                 StatusText = "Error";
             }
             finally
@@ -194,6 +188,10 @@ namespace WPFAIAssistant.ViewModels
                 _cts = null;
             }
         }
+
+        // Awaitable helper so every JS call is properly dispatched before the next chunk.
+        private Task Push(string script) =>
+            PushHtmlToConsole != null ? PushHtmlToConsole(script) : Task.CompletedTask;
 
         [RelayCommand]
         private void Stop() => _cts?.Cancel();
@@ -208,7 +206,7 @@ namespace WPFAIAssistant.ViewModels
             Sessions.Insert(0, svm);
 
             SetActiveSessionItem(svm);
-            PushHtmlToConsole?.Invoke("clearConsole();");
+            await Push("clearConsole();");
             StatusText = "Ready";
         }
 
@@ -240,7 +238,7 @@ namespace WPFAIAssistant.ViewModels
         {
             _currentSession.Messages.Clear();
             await _sessionService.SaveAsync(_currentSession);
-            PushHtmlToConsole?.Invoke("clearConsole();");
+            await Push("clearConsole();");
             StatusText = "Ready";
         }
 
@@ -311,7 +309,7 @@ namespace WPFAIAssistant.ViewModels
             _currentSession = full ?? new ChatSession { Id = svm.Id, Title = svm.Title };
 
             SetActiveSessionItem(svm);
-            PushHtmlToConsole?.Invoke("clearConsole();");
+            await Push("clearConsole();");
 
             if (ReplayHistory != null && _currentSession.Messages.Count > 0)
                 await ReplayHistory(_currentSession.Messages);
@@ -326,10 +324,10 @@ namespace WPFAIAssistant.ViewModels
             svm.IsActive = true;
         }
 
-        private void AppendUserBubble(string text)
+        private Task AppendUserBubble(string text)
         {
             var htmlText = EscapeJsString(System.Web.HttpUtility.HtmlEncode(text));
-            PushHtmlToConsole?.Invoke(BuildScript("appendUser", htmlText));
+            return Push(BuildScript("appendUser", htmlText));
         }
 
         private static string BuildScript(string fn, string arg) => fn + "('" + arg + "');";

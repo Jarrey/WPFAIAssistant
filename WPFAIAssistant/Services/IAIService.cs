@@ -8,7 +8,7 @@ namespace WPFAIAssistant.Services
             string apiKey,
             string baseUrl,
             IReadOnlyList<Models.ChatMessage> history,
-            Action<string>? onThinkingChunk = null,
+            Func<string, Task>? onThinkingChunk = null,
             string? systemPromptExtra = null,
             CancellationToken cancellationToken = default);
 
