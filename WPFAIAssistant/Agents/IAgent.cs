@@ -1,9 +1,9 @@
-using Microsoft.SemanticKernel;
+using System.Text.Json;
 
 namespace WPFAIAssistant.Agents
 {
     /// <summary>
-    /// Base interface for all AI agent plugins.
+    /// Base interface for all AI agent tools.
     /// Implement this to create a new tool available to the AI.
     /// </summary>
     public interface IAgent
@@ -11,7 +11,17 @@ namespace WPFAIAssistant.Agents
         string PluginName { get; }
         string Description { get; }
 
-        /// <summary>Register this agent's SK functions into the kernel.</summary>
-        void Register(Kernel kernel);
+        /// <summary>Returns tool definitions exposed by this agent.</summary>
+        IReadOnlyList<AgentToolDefinition> GetToolDefinitions();
+
+        /// <summary>Invoke a tool by name with JSON arguments.</summary>
+        string Invoke(string toolName, JsonElement arguments);
+    }
+
+    public sealed class AgentToolDefinition
+    {
+        public required string Name { get; init; }
+        public required string Description { get; init; }
+        public required Dictionary<string, object> ParametersSchema { get; init; }
     }
 }

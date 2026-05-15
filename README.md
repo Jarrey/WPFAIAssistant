@@ -1,6 +1,6 @@
 # WPF AI Assistant
 
-A WPF desktop application providing an AI chat assistant with a rich WebView2-based console, powered by [Semantic Kernel](https://github.com/microsoft/semantic-kernel) and compatible with OpenAI-compatible API providers (DeepSeek, OpenAI, Anthropic Claude, etc.).
+A WPF desktop application providing an AI chat assistant with a rich WebView2-based console, compatible with OpenAI-compatible API providers (DeepSeek, OpenAI, Anthropic Claude, etc.).
 
 ## Features
 
@@ -9,8 +9,8 @@ A WPF desktop application providing an AI chat assistant with a rich WebView2-ba
 - **Streaming Responses** — Real-time token streaming with separate thinking/reasoning display
 - **Session Management** — Create, switch, and delete conversations; auto-save and restore
 - **Skills System** — Load external `.md` files as custom system prompts to extend AI capabilities
-- **File System Agent** — AI can inspect the local file system (list directories, get file metadata) via Semantic Kernel function calling
-- **Tool Calling** — Automatic function/tool resolution via SK when the model supports it
+- **File System Agent** — AI can inspect the local file system (list directories, get file metadata) via tool calling
+- **Tool Calling** — Automatic function/tool resolution via OpenAI-compatible tool-calling flow for supported models
 - **Dark Theme UI** — Collapsible settings panel, session list with timestamps, skill management
 
 ## Prerequisites
@@ -63,8 +63,8 @@ A WPF desktop application providing an AI chat assistant with a rich WebView2-ba
 ```
 WPFAIAssistant/
 ├── Agents/
-│   ├── AgentRegistry.cs       — IAgent / IAgentRegistry interfaces & AgentRegistry implementation
-│   └── FileSystemAgent.cs     — SK plugin: list directories, get file/directory info
+│   ├── AgentRegistry.cs       — IAgent / IAgentRegistry interfaces & agent tool registry
+│   └── FileSystemAgent.cs     — File system tool definitions and handlers
 ├── Bridge/
 │   └── WebBridge.cs           — COM-visible JS↔WPF interop object for WebView2
 ├── Models/
@@ -74,7 +74,7 @@ WPFAIAssistant/
 │   └── ConsoleTemplate.html   — Full HTML/CSS/JS console UI (marked.js, highlight.js)
 ├── Services/
 │   ├── IAIService.cs          — AI service interface (streaming chat, model list)
-│   ├── DeepSeekAIService.cs   — Implementation: raw HTTP SSE + SK tool calling
+│   ├── DeepSeekAIService.cs   — Implementation: raw HTTP SSE + OpenAI-compatible tool calling
 │   └── SpectreConsoleRenderer.cs  — ANSI escape code & Markdown to HTML converter
 ├── ViewModels/
 │   └── MainWindowViewModel.cs — MVVM view model (CommunityToolkit.Mvvm)
@@ -94,7 +94,6 @@ WPFAIAssistant/
 | Microsoft.Extensions.DependencyInjection | 10.0.8 |
 | Microsoft.Extensions.Configuration | 10.0.8 |
 | Microsoft.Extensions.Configuration.Json | 10.0.8 |
-| Microsoft.SemanticKernel | 1.76.0 |
 | Microsoft.Web.WebView2 | 1.0.3967.48 |
 
 ## AI Providers
@@ -108,7 +107,7 @@ The application is pre-configured with presets for three providers:
 ## Key Technical Details
 
 - **Reasoning Models**: When using `deepseek-v4-pro` (or any model ID containing "pro"/"reasoner"), the service enables thinking mode and disables tool calling (API limitation)
-- **Tool Calling**: For non-reasoning models, Semantic Kernel automatically resolves function calls (e.g., file system queries) before streaming the final response
+- **Tool Calling**: For non-reasoning models, the app resolves tool calls through an OpenAI-compatible non-streaming pass before streaming the final answer
 - **Session Persistence**: Sessions are auto-saved to the `sessions/` directory as JSON files
 - **Skills**: `.md` files placed in the `skills/` directory or loaded via the UI are injected into the system prompt
 

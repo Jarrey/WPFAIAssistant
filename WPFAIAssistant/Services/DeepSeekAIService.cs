@@ -1,7 +1,4 @@
-﻿using Microsoft.SemanticKernel;
-using Microsoft.SemanticKernel.ChatCompletion;
-using Microsoft.SemanticKernel.Connectors.OpenAI;
-using System.Net.Http;
+﻿using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -31,7 +28,7 @@ namespace WPFAIAssistant.Services
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             // deepseek-v4-pro supports thinking mode (via request params) but does NOT support
-            // tool/function calling when thinking is enabled. Skip the SK pass for it.
+            // tool/function calling when thinking is enabled. Skip tool resolution for it.
             // deepseek-v4-flash is the standard model and supports tool calls.
             // Legacy names: deepseek-reasoner → thinking, deepseek-chat → standard.
             bool isReasoningModel = modelId.Contains("pro", StringComparison.OrdinalIgnoreCase)
@@ -44,58 +41,12 @@ namespace WPFAIAssistant.Services
                 : baseSystem + "\n\n" + systemPromptExtra;
 
             // Build the plain message list we'll send to the streaming endpoint
-            var messages = new List<object>();
-            messages.Add(new { role = "system", content = systemPrompt });
-            foreach (var msg in history)
-            {
-                var role = msg.Role == MessageRole.User ? "user" : "assistant";
-                messages.Add(new { role, content = msg.Content });
-            }
-            messages.Add(new { role = "user", content = userMessage });
+            var messages = BuildConversationMessages(systemPrompt, history, userMessage);
 
             if (!isReasoningModel)
             {
-                // ── 1. Run any tool/function calls via SK (non-streaming) ──────
-                var kernel = BuildKernel(modelId, apiKey, baseUrl);
-                _agentRegistry.ApplyToKernel(kernel);
-
-                var chatService = kernel.GetRequiredService<IChatCompletionService>();
-
-                var skHistory = new Microsoft.SemanticKernel.ChatCompletion.ChatHistory();
-                skHistory.AddSystemMessage(systemPrompt);
-                foreach (var msg in history)
-                {
-                    if (msg.Role == MessageRole.User)           skHistory.AddUserMessage(msg.Content);
-                    else if (msg.Role == MessageRole.Assistant) skHistory.AddAssistantMessage(msg.Content);
-                }
-                skHistory.AddUserMessage(userMessage);
-
-#pragma warning disable SKEXP0001
-                var toolSettings = new OpenAIPromptExecutionSettings
-                {
-                    MaxTokens = 16000,
-                    Temperature = 0.7,
-                    ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions,
-                };
-#pragma warning restore SKEXP0001
-
-                // Let SK resolve function calls (may loop internally)
-                var toolResult = await chatService.GetChatMessageContentAsync(
-                    skHistory, toolSettings, kernel, cancellationToken);
-                skHistory.Add(toolResult);
-
-                // Rebuild messages from SK history, excluding the final assistant reply
-                // so the streaming call has something left to generate.
-                messages.Clear();
-                var skMessages = skHistory.ToList();
-                for (int i = 0; i < skMessages.Count - 1; i++)
-                {
-                    var m = skMessages[i];
-                    var role = m.Role == AuthorRole.System    ? "system"
-                             : m.Role == AuthorRole.Assistant ? "assistant"
-                             : "user";
-                    messages.Add(new { role, content = m.Content ?? string.Empty });
-                }
+                // ── 1. Run tool/function calls via OpenAI-compatible non-streaming pass ──────
+                messages = await ResolveToolCallsAsync(messages, modelId, apiKey, baseUrl, cancellationToken);
             }
 
             // ── Stream via raw HTTP so we can read reasoning_content ───────────
@@ -107,9 +58,96 @@ namespace WPFAIAssistant.Services
             }
         }
 
+        private async Task<List<Dictionary<string, object?>>> ResolveToolCallsAsync(
+            List<Dictionary<string, object?>> messages,
+            string modelId,
+            string apiKey,
+            string baseUrl,
+            CancellationToken cancellationToken)
+        {
+            var tools = _agentRegistry.GetToolDefinitions();
+            if (tools.Count == 0)
+                return messages;
+
+            var toolSpecs = tools.Select(t => new Dictionary<string, object?>
+            {
+                ["type"] = "function",
+                ["function"] = new Dictionary<string, object?>
+                {
+                    ["name"] = t.Name,
+                    ["description"] = t.Description,
+                    ["parameters"] = t.ParametersSchema
+                }
+            }).ToList();
+
+            // Resolve iterative tool calls; keep final assistant response for streaming phase.
+            for (int i = 0; i < 6; i++)
+            {
+                var requestBody = JsonSerializer.Serialize(new
+                {
+                    model = modelId,
+                    messages,
+                    stream = false,
+                    max_tokens = 16000,
+                    temperature = 0.7,
+                    tools = toolSpecs,
+                    tool_choice = "auto"
+                });
+
+                using var completionDoc = await PostCompletionAsync(baseUrl, apiKey, requestBody, cancellationToken);
+                var assistantMessage = completionDoc.RootElement
+                    .GetProperty("choices")[0]
+                    .GetProperty("message");
+
+                if (!assistantMessage.TryGetProperty("tool_calls", out var toolCalls) ||
+                    toolCalls.ValueKind != JsonValueKind.Array ||
+                    toolCalls.GetArrayLength() == 0)
+                {
+                    break;
+                }
+
+                messages.Add(new Dictionary<string, object?>
+                {
+                    ["role"] = "assistant",
+                    ["tool_calls"] = JsonSerializer.Deserialize<object>(toolCalls.GetRawText())
+                });
+
+                foreach (var call in toolCalls.EnumerateArray())
+                {
+                    var callId = call.GetProperty("id").GetString() ?? string.Empty;
+                    var function = call.GetProperty("function");
+                    var toolName = function.GetProperty("name").GetString() ?? string.Empty;
+                    var argumentsJson = function.TryGetProperty("arguments", out var argsEl)
+                        ? argsEl.GetString() ?? "{}"
+                        : "{}";
+
+                    string toolOutput;
+                    try
+                    {
+                        using var argsDoc = JsonDocument.Parse(string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson);
+                        toolOutput = _agentRegistry.TryInvoke(toolName, argsDoc.RootElement)
+                            ?? $"[Error] Tool not found: {toolName}";
+                    }
+                    catch (Exception ex)
+                    {
+                        toolOutput = $"[Error] Tool execution failed: {ex.Message}";
+                    }
+
+                    messages.Add(new Dictionary<string, object?>
+                    {
+                        ["role"] = "tool",
+                        ["tool_call_id"] = callId,
+                        ["content"] = toolOutput
+                    });
+                }
+            }
+
+            return messages;
+        }
+
         // ── Raw SSE streaming ────────────────────────────────────────────────────
         private static async IAsyncEnumerable<string> StreamRawAsync(
-            List<object> messages,
+            List<Dictionary<string, object?>> messages,
             string modelId,
             string apiKey,
             string baseUrl,
@@ -130,7 +168,7 @@ namespace WPFAIAssistant.Services
                     messages,
                     stream = true,
                     max_tokens = 16000,
-                    temperature = 1,           // required when thinking enabled
+                    temperature = 1,
                     thinking = new { type = "enabled" },
                     reasoning_effort = "high",
                 });
@@ -174,7 +212,7 @@ namespace WPFAIAssistant.Services
                 if (json == "[DONE]") break;
 
                 string? reasoning = null;
-                string? content   = null;
+                string? content = null;
                 try
                 {
                     using var doc = JsonDocument.Parse(json);
@@ -194,14 +232,16 @@ namespace WPFAIAssistant.Services
                         reasoning = rc.GetString();
                     }
 
-                    // normal content
                     if (delta.TryGetProperty("content", out var ct) &&
                         ct.ValueKind == JsonValueKind.String)
                     {
                         content = ct.GetString();
                     }
                 }
-                catch { continue; }
+                catch
+                {
+                    continue;
+                }
 
                 if (!string.IsNullOrEmpty(reasoning) && onThinkingChunk != null)
                     await onThinkingChunk(reasoning);
@@ -211,7 +251,6 @@ namespace WPFAIAssistant.Services
             }
         }
 
-        // ── Model list ───────────────────────────────────────────────────────────
         public async Task<IReadOnlyList<string>> GetAvailableModelsAsync(string apiKey, string baseUrl)
         {
             return await Task.FromResult<IReadOnlyList<string>>(new List<string>
@@ -221,18 +260,61 @@ namespace WPFAIAssistant.Services
             });
         }
 
-        // ── SK kernel (used only for tool-call pass) ─────────────────────────────
-        private static Kernel BuildKernel(string modelId, string apiKey, string baseUrl)
+        private static List<Dictionary<string, object?>> BuildConversationMessages(
+            string systemPrompt,
+            IReadOnlyList<ChatMessage> history,
+            string userMessage)
         {
-            var builder = Kernel.CreateBuilder();
-            builder.AddOpenAIChatCompletion(
-                modelId: modelId,
-                apiKey: apiKey,
-                httpClient: new System.Net.Http.HttpClient
+            var messages = new List<Dictionary<string, object?>>
+            {
+                new()
                 {
-                    BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/")
+                    ["role"] = "system",
+                    ["content"] = systemPrompt
+                }
+            };
+
+            foreach (var msg in history)
+            {
+                var role = msg.Role == MessageRole.User ? "user" : "assistant";
+                messages.Add(new Dictionary<string, object?>
+                {
+                    ["role"] = role,
+                    ["content"] = msg.Content
                 });
-            return builder.Build();
+            }
+
+            messages.Add(new Dictionary<string, object?>
+            {
+                ["role"] = "user",
+                ["content"] = userMessage
+            });
+
+            return messages;
+        }
+
+        private static async Task<JsonDocument> PostCompletionAsync(
+            string baseUrl,
+            string apiKey,
+            string body,
+            CancellationToken cancellationToken)
+        {
+            var url = baseUrl.TrimEnd('/') + "/chat/completions";
+
+            using var http = new HttpClient();
+            http.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", apiKey);
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            };
+
+            using var response = await http.SendAsync(request, cancellationToken);
+            response.EnsureSuccessStatusCode();
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            return JsonDocument.Parse(json);
         }
     }
 }

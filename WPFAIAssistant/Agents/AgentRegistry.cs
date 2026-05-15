@@ -1,9 +1,9 @@
-using Microsoft.SemanticKernel;
+using System.Text.Json;
 
 namespace WPFAIAssistant.Agents
 {
     /// <summary>
-    /// Collects all registered agents and exposes them to the Kernel.
+    /// Collects all registered agents and exposes their tool definitions.
     /// Inject IAgentRegistry wherever you need to add or enumerate agents.
     /// </summary>
     public interface IAgentRegistry
@@ -11,8 +11,8 @@ namespace WPFAIAssistant.Agents
         IReadOnlyList<IAgent> Agents { get; }
         void Register(IAgent agent);
 
-        /// <summary>Imports every registered agent as a SK plugin into the given kernel.</summary>
-        void ApplyToKernel(Kernel kernel);
+        IReadOnlyList<AgentToolDefinition> GetToolDefinitions();
+        string? TryInvoke(string toolName, JsonElement arguments);
     }
 
     public class AgentRegistry : IAgentRegistry
@@ -23,10 +23,24 @@ namespace WPFAIAssistant.Agents
 
         public void Register(IAgent agent) => _agents.Add(agent);
 
-        public void ApplyToKernel(Kernel kernel)
+        public IReadOnlyList<AgentToolDefinition> GetToolDefinitions()
+        {
+            var tools = new List<AgentToolDefinition>();
+            foreach (var agent in _agents)
+                tools.AddRange(agent.GetToolDefinitions());
+            return tools;
+        }
+
+        public string? TryInvoke(string toolName, JsonElement arguments)
         {
             foreach (var agent in _agents)
-                agent.Register(kernel);
+            {
+                var defs = agent.GetToolDefinitions();
+                if (defs.Any(d => string.Equals(d.Name, toolName, StringComparison.OrdinalIgnoreCase)))
+                    return agent.Invoke(toolName, arguments);
+            }
+
+            return null;
         }
     }
 }

@@ -14,3 +14,11 @@ Validate whether the selected migration scenario applies to the current codebase
 **Done when**: Evidence is documented for package/API usage, the migration applicability decision is recorded, and the workflow progress is updated.
 
 ---
+
+### 02-refactor-sk-core-tool-calling
+
+Refactor the current Semantic Kernel core tool-calling implementation to a native OpenAI-compatible tool invocation pipeline, while preserving existing user-facing chat behavior and local tool functionality.
+
+**Done when**: Semantic Kernel core dependencies are removed from runtime code and project packages, tool invocation still works for non-reasoning models, and the solution builds successfully.
+
+---

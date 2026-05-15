@@ -1,28 +1,106 @@
-using Microsoft.SemanticKernel;
 using System.ComponentModel;
 using System.IO;
 using System.Text;
+using System.Text.Json;
 
 namespace WPFAIAssistant.Agents
 {
     /// <summary>
     /// Agent that lets the AI inspect the local file system.
     /// Exposed functions:
-    ///   - ListDirectory   : list sub-folders and files in a directory
-    ///   - GetFileInfo     : metadata for a single file
-    ///   - GetDirectoryInfo: metadata for a directory
+    ///   - list_directory   : list sub-folders and files in a directory
+    ///   - get_file_info    : metadata for a single file
+    ///   - get_directory_info: metadata for a directory
     /// </summary>
     public class FileSystemAgent : IAgent
     {
         public string PluginName => "FileSystem";
         public string Description => "Provides access to local file system: list directories and file metadata.";
 
-        public void Register(Kernel kernel) =>
-            kernel.ImportPluginFromObject(this, PluginName);
+        public IReadOnlyList<AgentToolDefinition> GetToolDefinitions()
+        {
+            return
+            [
+                new AgentToolDefinition
+                {
+                    Name = "list_directory",
+                    Description = "List the contents (sub-folders and files) of a local directory. Returns a formatted text summary.",
+                    ParametersSchema = new Dictionary<string, object>
+                    {
+                        ["type"] = "object",
+                        ["properties"] = new Dictionary<string, object>
+                        {
+                            ["path"] = new Dictionary<string, object>
+                            {
+                                ["type"] = "string",
+                                ["description"] = "Absolute or relative path of the directory to list."
+                            },
+                            ["includeHidden"] = new Dictionary<string, object>
+                            {
+                                ["type"] = "boolean",
+                                ["description"] = "Include hidden files and folders (starting with '.')."
+                            }
+                        },
+                        ["required"] = new[] { "path" },
+                        ["additionalProperties"] = false
+                    }
+                },
+                new AgentToolDefinition
+                {
+                    Name = "get_file_info",
+                    Description = "Get detailed metadata about a single file: size, dates, extension, read-only flag.",
+                    ParametersSchema = new Dictionary<string, object>
+                    {
+                        ["type"] = "object",
+                        ["properties"] = new Dictionary<string, object>
+                        {
+                            ["path"] = new Dictionary<string, object>
+                            {
+                                ["type"] = "string",
+                                ["description"] = "Absolute or relative path of the file."
+                            }
+                        },
+                        ["required"] = new[] { "path" },
+                        ["additionalProperties"] = false
+                    }
+                },
+                new AgentToolDefinition
+                {
+                    Name = "get_directory_info",
+                    Description = "Get metadata for a directory: total size, file count, sub-folder count.",
+                    ParametersSchema = new Dictionary<string, object>
+                    {
+                        ["type"] = "object",
+                        ["properties"] = new Dictionary<string, object>
+                        {
+                            ["path"] = new Dictionary<string, object>
+                            {
+                                ["type"] = "string",
+                                ["description"] = "Absolute or relative path of the directory."
+                            }
+                        },
+                        ["required"] = new[] { "path" },
+                        ["additionalProperties"] = false
+                    }
+                }
+            ];
+        }
 
-        // ── Kernel Functions ─────────────────────────────────────────
+        public string Invoke(string toolName, JsonElement arguments)
+        {
+            return toolName switch
+            {
+                "list_directory" => ListDirectory(
+                    GetRequiredString(arguments, "path"),
+                    GetOptionalBool(arguments, "includeHidden") ?? false),
+                "get_file_info" => GetFileInfo(GetRequiredString(arguments, "path")),
+                "get_directory_info" => GetDirectoryInfo(GetRequiredString(arguments, "path")),
+                _ => $"[Error] Unknown tool: {toolName}"
+            };
+        }
 
-        [KernelFunction("list_directory")]
+        // ── Tool Implementations ─────────────────────────────────────
+
         [Description("List the contents (sub-folders and files) of a local directory. Returns a formatted text summary.")]
         public string ListDirectory(
             [Description("Absolute or relative path of the directory to list.")] string path,
@@ -75,7 +153,6 @@ namespace WPFAIAssistant.Agents
             return sb.ToString();
         }
 
-        [KernelFunction("get_file_info")]
         [Description("Get detailed metadata about a single file: size, dates, extension, read-only flag.")]
         public string GetFileInfo(
             [Description("Absolute or relative path of the file.")] string path)
@@ -96,7 +173,6 @@ namespace WPFAIAssistant.Agents
             return sb.ToString();
         }
 
-        [KernelFunction("get_directory_info")]
         [Description("Get metadata for a directory: total size, file count, sub-folder count.")]
         public string GetDirectoryInfo(
             [Description("Absolute or relative path of the directory.")] string path)
@@ -131,6 +207,23 @@ namespace WPFAIAssistant.Agents
         }
 
         // ── Helpers ──────────────────────────────────────────────────
+
+        private static string GetRequiredString(JsonElement obj, string property)
+        {
+            if (obj.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String)
+                return value.GetString() ?? string.Empty;
+
+            throw new ArgumentException($"Missing required argument: {property}");
+        }
+
+        private static bool? GetOptionalBool(JsonElement obj, string property)
+        {
+            if (obj.TryGetProperty(property, out var value) &&
+                (value.ValueKind == JsonValueKind.True || value.ValueKind == JsonValueKind.False))
+                return value.GetBoolean();
+
+            return null;
+        }
 
         private static string ResolvePath(string path)
         {

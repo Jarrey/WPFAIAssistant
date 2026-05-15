@@ -14,6 +14,7 @@ Scope-first validation, then execute only if SK Agents APIs are present.
 ## Decisions
 - Selected scenario is specifically SK Agents to Agent Framework migration.
 - Repository currently uses Semantic Kernel core patterns, not SK Agents APIs.
+- User approved proceeding with a custom refactor to remove Semantic Kernel core tool-calling and modernize the pipeline.
 
 ## Custom Instructions
 <!-- Task-specific overrides: "For {taskId}: {instruction}" -->

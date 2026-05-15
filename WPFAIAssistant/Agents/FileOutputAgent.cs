@@ -1,7 +1,7 @@
-using Microsoft.SemanticKernel;
 using System.ComponentModel;
 using System.IO;
 using System.Text;
+using System.Text.Json;
 
 namespace WPFAIAssistant.Agents
 {
@@ -13,10 +13,93 @@ namespace WPFAIAssistant.Agents
         public string PluginName => "FileOutput";
         public string Description => "Writes or appends text content to local files.";
 
-        public void Register(Kernel kernel) =>
-            kernel.ImportPluginFromObject(this, PluginName);
+        public IReadOnlyList<AgentToolDefinition> GetToolDefinitions()
+        {
+            return
+            [
+                new AgentToolDefinition
+                {
+                    Name = "write_text_file",
+                    Description = "Write text content to a local file. Creates parent folders if needed.",
+                    ParametersSchema = new Dictionary<string, object>
+                    {
+                        ["type"] = "object",
+                        ["properties"] = new Dictionary<string, object>
+                        {
+                            ["path"] = new Dictionary<string, object>
+                            {
+                                ["type"] = "string",
+                                ["description"] = "Absolute or relative file path."
+                            },
+                            ["content"] = new Dictionary<string, object>
+                            {
+                                ["type"] = "string",
+                                ["description"] = "Text content to write."
+                            },
+                            ["overwrite"] = new Dictionary<string, object>
+                            {
+                                ["type"] = "boolean",
+                                ["description"] = "Whether to overwrite if the file exists."
+                            },
+                            ["encoding"] = new Dictionary<string, object>
+                            {
+                                ["type"] = "string",
+                                ["description"] = "Text encoding. Supported: utf-8, utf-16, ascii."
+                            }
+                        },
+                        ["required"] = new[] { "path", "content" },
+                        ["additionalProperties"] = false
+                    }
+                },
+                new AgentToolDefinition
+                {
+                    Name = "append_text_file",
+                    Description = "Append text content to a local file. Creates parent folders and file if needed.",
+                    ParametersSchema = new Dictionary<string, object>
+                    {
+                        ["type"] = "object",
+                        ["properties"] = new Dictionary<string, object>
+                        {
+                            ["path"] = new Dictionary<string, object>
+                            {
+                                ["type"] = "string",
+                                ["description"] = "Absolute or relative file path."
+                            },
+                            ["content"] = new Dictionary<string, object>
+                            {
+                                ["type"] = "string",
+                                ["description"] = "Text content to append."
+                            },
+                            ["encoding"] = new Dictionary<string, object>
+                            {
+                                ["type"] = "string",
+                                ["description"] = "Text encoding. Supported: utf-8, utf-16, ascii."
+                            }
+                        },
+                        ["required"] = new[] { "path", "content" },
+                        ["additionalProperties"] = false
+                    }
+                }
+            ];
+        }
 
-        [KernelFunction("write_text_file")]
+        public string Invoke(string toolName, JsonElement arguments)
+        {
+            return toolName switch
+            {
+                "write_text_file" => WriteTextFile(
+                    GetRequiredString(arguments, "path"),
+                    GetRequiredString(arguments, "content"),
+                    GetOptionalBool(arguments, "overwrite") ?? true,
+                    GetOptionalString(arguments, "encoding") ?? "utf-8"),
+                "append_text_file" => AppendTextFile(
+                    GetRequiredString(arguments, "path"),
+                    GetRequiredString(arguments, "content"),
+                    GetOptionalString(arguments, "encoding") ?? "utf-8"),
+                _ => $"[Error] Unknown tool: {toolName}"
+            };
+        }
+
         [Description("Write text content to a local file. Creates parent folders if needed.")]
         public string WriteTextFile(
             [Description("Absolute or relative file path.")] string path,
@@ -44,7 +127,6 @@ namespace WPFAIAssistant.Agents
             }
         }
 
-        [KernelFunction("append_text_file")]
         [Description("Append text content to a local file. Creates parent folders and file if needed.")]
         public string AppendTextFile(
             [Description("Absolute or relative file path.")] string path,
@@ -66,6 +148,31 @@ namespace WPFAIAssistant.Agents
             {
                 return $"[Error] Failed to append file: {ex.Message}";
             }
+        }
+
+        private static string GetRequiredString(JsonElement obj, string property)
+        {
+            if (obj.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String)
+                return value.GetString() ?? string.Empty;
+
+            throw new ArgumentException($"Missing required argument: {property}");
+        }
+
+        private static string? GetOptionalString(JsonElement obj, string property)
+        {
+            if (obj.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String)
+                return value.GetString();
+
+            return null;
+        }
+
+        private static bool? GetOptionalBool(JsonElement obj, string property)
+        {
+            if (obj.TryGetProperty(property, out var value) &&
+                (value.ValueKind == JsonValueKind.True || value.ValueKind == JsonValueKind.False))
+                return value.GetBoolean();
+
+            return null;
         }
 
         private static string ResolvePath(string path)
