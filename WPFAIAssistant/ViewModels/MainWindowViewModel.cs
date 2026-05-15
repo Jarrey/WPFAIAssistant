@@ -21,7 +21,7 @@ namespace WPFAIAssistant.ViewModels
         public Action<string>? PushHtmlToConsole { get; set; }
         public Func<IReadOnlyList<ChatMessage>, Task>? ReplayHistory { get; set; }
 
-        // 鈹€鈹€ Settings 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+        // ── Settings ──────────────────────────────────────────────
         [ObservableProperty] private string _apiKey = string.Empty;
         [ObservableProperty] private string _baseUrl = "https://api.deepseek.com/";
         [ObservableProperty] private string _selectedModel = "deepseek-chat";
@@ -31,19 +31,19 @@ namespace WPFAIAssistant.ViewModels
             "deepseek-chat", "deepseek-reasoner"
         };
 
-        // 鈹€鈹€ Input / state 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+        // ── Input / state ─────────────────────────────────────────
         [ObservableProperty] private string _inputText = string.Empty;
         [ObservableProperty] private bool _isBusy = false;
         [ObservableProperty] private string _statusText = "Ready";
 
-        // 鈹€鈹€ Session list 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+        // ── Session list ─────────────────────────────────────────
         [ObservableProperty] private ObservableCollection<SessionViewModel> _sessions = new();
         [ObservableProperty] private SessionViewModel? _activeSession;
 
-        // 鈹€鈹€ Skills 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+        // ── Skills ───────────────────────────────────────────────
         [ObservableProperty] private ObservableCollection<SkillViewModel> _skills = new();
 
-        // 鈹€鈹€ Constructor 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+        // ── Constructor ──────────────────────────────────────────
         public MainWindowViewModel(
             IAIService aiService,
             ISessionService sessionService,
