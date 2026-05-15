@@ -1,31 +1,38 @@
 # WPF AI Assistant
 
-A WPF desktop application that provides an AI chat assistant interface powered by Semantic Kernel and various LLM providers (DeepSeek, OpenAI, Claude).
+A WPF desktop application providing an AI chat assistant with a rich WebView2-based console, powered by [Semantic Kernel](https://github.com/microsoft/semantic-kernel) and compatible with OpenAI-compatible API providers (DeepSeek, OpenAI, Anthropic Claude, etc.).
 
 ## Features
 
-- Chat with AI models through a rich WebView2-based console UI
-- Markdown rendering with syntax highlighting
-- Session management (create, switch, delete conversations)
-- Skills system — load external prompt files to extend AI capabilities
-- File system agent — AI can inspect the local file system
-- Dark theme UI with collapsible settings panel
-- Streaming responses with thinking/reasoning display
+- **WebView2 Console UI** — Markdown rendering with syntax highlighting (highlight.js), thinking/reasoning blocks, streaming cursor, dark theme (Catppuccin Mocha-inspired)
+- **Multi-Provider** — DeepSeek, OpenAI, and Claude presets; any OpenAI-compatible API works
+- **Streaming Responses** — Real-time token streaming with separate thinking/reasoning display
+- **Session Management** — Create, switch, and delete conversations; auto-save and restore
+- **Skills System** — Load external `.md` files as custom system prompts to extend AI capabilities
+- **File System Agent** — AI can inspect the local file system (list directories, get file metadata) via Semantic Kernel function calling
+- **Tool Calling** — Automatic function/tool resolution via SK when the model supports it
+- **Dark Theme UI** — Collapsible settings panel, session list with timestamps, skill management
 
 ## Prerequisites
 
-- .NET 10.0 SDK or later
-- WebView2 runtime (included with Windows 11 / Edge)
+- [.NET 10.0 SDK](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) or later
+- [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (included with Windows 11 / Microsoft Edge)
+- Windows (WPF framework dependency)
 
 ## Getting Started
 
-1. Clone the repository
-2. Open `WPFAIAssistant.slnx` or `WPFAIAssistant/WPFAIAssistant.csproj` in your IDE
-3. Restore NuGet packages:
+1. Clone the repository:
+   ```
+   git clone <repo-url>
+   cd WPFAIAssistant
+   ```
+
+2. Restore NuGet packages:
    ```
    dotnet restore
    ```
-4. Configure your API key in `WPFAIAssistant/appsettings.json`:
+
+3. Configure your API key in `WPFAIAssistant/appsettings.json`:
    ```json
    {
      "DeepSeek": {
@@ -35,27 +42,76 @@ A WPF desktop application that provides an AI chat assistant interface powered b
      }
    }
    ```
-5. Build and run:
+
+4. Build and run:
    ```
    dotnet run --project WPFAIAssistant
    ```
 
 ## Usage
 
-- Type your message in the input box and press Enter or click Send
-- Use the sidebar to manage chat sessions
-- Expand Settings to configure API key, base URL, and model
-- Load skills (.md files) to provide the AI with custom system prompts
+- **Chat**: Type a message in the input box and press Enter or click **Send**
+- **Sessions**: Use the sidebar to create (＋New), switch, or delete conversations
+- **Settings**: Click ⚙ **SETTINGS** to expand the panel and configure API key, base URL, and model
+- **Presets**: Quickly switch provider settings with **DeepSeek**, **OpenAI**, or **Claude** preset buttons
+- **Skills**: Click 🧩 **SKILLS** to view loaded skills; click **＋Load** to import a `.md` skill file, toggle skills on/off with the checkbox
+- **Stop**: Click **⛔ Stop Generation** to cancel an ongoing response
+- **App Settings**: API key, base URL, and model are also configurable at runtime via the settings panel
 
 ## Project Structure
 
-- `Agents/` — AI agents and agent registry (Semantic Kernel plugins)
-- `Bridge/` — WebView2 JavaScript interop
-- `Models/` — Data models (ChatMessage, AppSettings)
-- `Resources/` — HTML/JS console template
-- `Services/` — AI service interfaces and implementations
-- `ViewModels/` — MVVM view models
+```
+WPFAIAssistant/
+├── Agents/
+│   ├── AgentRegistry.cs       — IAgent / IAgentRegistry interfaces & AgentRegistry implementation
+│   └── FileSystemAgent.cs     — SK plugin: list directories, get file/directory info
+├── Bridge/
+│   └── WebBridge.cs           — COM-visible JS↔WPF interop object for WebView2
+├── Models/
+│   ├── AppSettings.cs         — ApiKey, BaseUrl, ModelId configuration model
+│   └── ChatMessage.cs         — MessageRole enum & ChatMessage class
+├── Resources/
+│   └── ConsoleTemplate.html   — Full HTML/CSS/JS console UI (marked.js, highlight.js)
+├── Services/
+│   ├── IAIService.cs          — AI service interface (streaming chat, model list)
+│   ├── DeepSeekAIService.cs   — Implementation: raw HTTP SSE + SK tool calling
+│   └── SpectreConsoleRenderer.cs  — ANSI escape code & Markdown to HTML converter
+├── ViewModels/
+│   └── MainWindowViewModel.cs — MVVM view model (CommunityToolkit.Mvvm)
+├── skills/
+│   └── example_skill.md       — Example skill file
+├── App.xaml / App.xaml.cs     — Application entry point & DI setup
+├── MainWindow.xaml            — Full dark-theme UI layout
+├── MainWindow.xaml.cs         — Window code-behind (WebView2 setup, events)
+└── appsettings.json           — Default configuration (API key, base URL, model)
+```
+
+## Dependencies
+
+| Package | Version |
+|---|---|
+| CommunityToolkit.Mvvm | 8.4.2 |
+| Microsoft.Extensions.DependencyInjection | 10.0.8 |
+| Microsoft.Extensions.Configuration | 10.0.8 |
+| Microsoft.Extensions.Configuration.Json | 10.0.8 |
+| Microsoft.SemanticKernel | 1.76.0 |
+| Microsoft.Web.WebView2 | 1.0.3967.48 |
+
+## AI Providers
+
+The application is pre-configured with presets for three providers:
+
+- **DeepSeek**: `https://api.deepseek.com/v1` — models: `deepseek-v4-flash`, `deepseek-v4-pro` (with thinking/reasoning support)
+- **OpenAI**: `https://api.openai.com/v1` — models: `gpt-4o`, `gpt-4o-mini`
+- **Claude (Anthropic)**: `https://api.anthropic.com/v1` — models: `claude-opus-4-5`, `claude-sonnet-4-5`, `claude-haiku-3-5`
+
+## Key Technical Details
+
+- **Reasoning Models**: When using `deepseek-v4-pro` (or any model ID containing "pro"/"reasoner"), the service enables thinking mode and disables tool calling (API limitation)
+- **Tool Calling**: For non-reasoning models, Semantic Kernel automatically resolves function calls (e.g., file system queries) before streaming the final response
+- **Session Persistence**: Sessions are auto-saved to the `sessions/` directory as JSON files
+- **Skills**: `.md` files placed in the `skills/` directory or loaded via the UI are injected into the system prompt
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE)
