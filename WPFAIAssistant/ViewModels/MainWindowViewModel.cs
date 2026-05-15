@@ -24,11 +24,11 @@ namespace WPFAIAssistant.ViewModels
         // ── Settings ──────────────────────────────────────────────
         [ObservableProperty] private string _apiKey = string.Empty;
         [ObservableProperty] private string _baseUrl = "https://api.deepseek.com/";
-        [ObservableProperty] private string _selectedModel = "deepseek-chat";
+        [ObservableProperty] private string _selectedModel = "deepseek-v4-flash";
         [ObservableProperty]
         private ObservableCollection<string> _availableModels = new()
         {
-            "deepseek-chat", "deepseek-reasoner"
+            "deepseek-v4-flash", "deepseek-v4-pro"
         };
 
         // ── Input / state ─────────────────────────────────────────
