@@ -1,0 +1,15 @@
+{
+  "scenarioId": "SemanticKernel-To-AgentFramework",
+  "operationId": "221b8e31-63d2-4723-9946-fc097d4316fc",
+  "description": "Migrate from Semantic Kernel Agents to Agent Framework in .NET projects.",
+  "startTime": "2026-05-15T16:49:42.6886099Z",
+  "lastUpdateTime": "2026-05-15T22:59:12.7970976Z",
+  "stage": "Assessment",
+  "properties": {
+    "currentTask": "03-migrate-to-microsoft-extensions-ai-style",
+    "task:02-refactor-sk-core-tool-calling:startedAt": "2026-05-15T16:59:14.9096983Z",
+    "task:03-migrate-to-microsoft-extensions-ai-style:startedAt": "2026-05-15T17:14:44.2163432Z",
+    "task:01-scope-validation-and-outcome:startedAt": "2026-05-15T16:54:34.6365100Z"
+  },
+  "folderPath": ""
+}

@@ -4,13 +4,13 @@
 
 Implemented a full runtime refactor from Semantic Kernel core tool-calling to a native OpenAI-compatible tool pipeline:
 
-1. **Tool contract and registry redesign**
+**Progress**: 2/3 tasks complete (67%) ![67%](https://progress-bar.xyz/67)
    - Replaced SK-specific `Kernel` registration API with generic tool definitions and dispatcher methods.
    - Added tool schema representation (`AgentToolDefinition`) for OpenAI-compatible `tools` payload generation.
 
 2. **Agent implementations migrated**
    - `FileSystemAgent` and `FileOutputAgent` now expose JSON-schema tool definitions and explicit invocation handlers.
-   - Removed all `[KernelFunction]` usage while preserving original tool business logic and helper/comment blocks.
+- 🔄 03-migrate-to-microsoft-extensions-ai-style: Migrate runtime to Microsoft.Extensions.AI style
 
 3. **Service runtime pipeline migrated**
    - Replaced SK pre-stream tool resolution in `DeepSeekAIService` with direct non-streaming completion calls using `tools` + `tool_choice=auto`.

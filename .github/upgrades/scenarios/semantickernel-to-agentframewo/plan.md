@@ -22,3 +22,11 @@ Refactor the current Semantic Kernel core tool-calling implementation to a nativ
 **Done when**: Semantic Kernel core dependencies are removed from runtime code and project packages, tool invocation still works for non-reasoning models, and the solution builds successfully.
 
 ---
+
+### 03-migrate-to-microsoft-extensions-ai-style
+
+Modernize the chat pipeline to use Microsoft.Extensions.AI abstractions and provider integration packages while preserving existing UI interaction flow and custom tool behavior.
+
+**Done when**: Project references Microsoft.Extensions.AI packages, runtime chat path uses Microsoft.Extensions.AI-style client abstractions, and the solution builds successfully.
+
+---
